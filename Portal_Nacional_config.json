@@ -2,5 +2,7 @@
     "pasta_downloads": "C:\\NFS-e\\PortalNacional",
     "competencia_desejada": "10/2025",
     "timeout": 30,
-    "headless": false
+    "headless": false,
+    "velocidade_linha": 0.8,
+    "velocidade_pagina": 2.5
 }

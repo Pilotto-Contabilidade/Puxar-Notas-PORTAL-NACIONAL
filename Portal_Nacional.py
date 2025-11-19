@@ -34,7 +34,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 CONFIG_FILE = Path(__file__).parent / "Portal_Nacional_config.json"
 DEFAULT_CONFIG = {
     "pasta_downloads": "C:\\NFS-e\\PortalNacional",
-    "competencia_desejada": "11/2025",
+    "competencia_desejada": "10/2025",
     "timeout": 30,
     "headless": False,
     "velocidade_linha": 0.8,
@@ -66,6 +66,12 @@ class Config:
         else:
             config = DEFAULT_CONFIG.copy()
             self._save_config(config)
+            return config
+
+        # Merge with defaults for missing keys
+        config = {**DEFAULT_CONFIG, **config}
+        # Save updated config if needed
+        self._save_config(config)
         return config
 
     def _save_config(self, config: Dict) -> None:
