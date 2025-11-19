@@ -18,7 +18,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================= CONFIGURAÇÕES =============================
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'cuu_config.json')
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'Portal_Nacional_config.json')
 DEFAULT_CONFIG = {
     "pasta_downloads": r"C:\NFS-e\PortalNacional",
     "competencia_desejada": "10/2025",
