@@ -802,10 +802,11 @@ class NFSeDownloaderApp:
         - O robô baixa os XMLs da competência (autorizadas + canceladas)
         - Organiza pastas por empresa e gera relatórios
         """
+
+        global COMPETENCIA_DESEJADA 
+
         # Lê competência da tela (ou usa padrão da config)
         competencia_str = self.entry_competencia.get().strip() or COMPETENCIA_DESEJADA
-
-        global COMPETENCIA_DESEJADA
         COMPETENCIA_DESEJADA = competencia_str
 
         self.log("")
