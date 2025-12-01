@@ -663,6 +663,7 @@ class NFSeDownloaderApp:
         self.root.geometry("840x540")
         self.root.minsize(820, 520)
 
+        # Estilo geral
         self.root.configure(bg="#f3f4f6")
         style = ttk.Style()
         try:
@@ -679,7 +680,7 @@ class NFSeDownloaderApp:
                   foreground=[("disabled", "#f3f4f6")],
                   background=[("active", "#2563eb")])
 
-        # Header
+        # Header (barra azul)
         header = tk.Frame(self.root, bg="#1d4ed8")
         header.pack(fill="x")
 
@@ -746,7 +747,10 @@ class NFSeDownloaderApp:
         self.txt_log.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
-    def log(self, msg):
+    # ------------------ UTILITÁRIOS DE INTERFACE ------------------ #
+
+    def log(self, msg: str):
+        """Escreve no log da interface e no console."""
         self.txt_log.configure(state="normal")
         self.txt_log.insert("end", msg + "\n")
         self.txt_log.see("end")
@@ -786,6 +790,8 @@ class NFSeDownloaderApp:
 
         self.log("Configurações salvas com sucesso.")
 
+    # ------------------ CONTROLE PRINCIPAL ------------------ #
+
     def iniciar_download(self):
         # Desabilitar botão para evitar múltiplos cliques
         self.btn_baixar.configure(state="disabled")
@@ -802,11 +808,10 @@ class NFSeDownloaderApp:
         - O robô baixa os XMLs da competência (autorizadas + canceladas)
         - Organiza pastas por empresa e gera relatórios
         """
-
-        global COMPETENCIA_DESEJADA 
+        global COMPETENCIA_DESEJADA
 
         # Lê competência da tela (ou usa padrão da config)
-        competencia_str = self.entry_competencia.get().strip() or COMPETENCIA_DESEJADA
+        competencia_str = self.var_comp.get().strip() or COMPETENCIA_DESEJADA
         COMPETENCIA_DESEJADA = competencia_str
 
         self.log("")
@@ -923,12 +928,12 @@ class NFSeDownloaderApp:
         self.log("=" * 90)
 
 
-    def main():
-        root = tk.Tk()
-        app = NFSeDownloaderApp(root)
-        root.mainloop()
+def main():
+    root = tk.Tk()
+    app = NFSeDownloaderApp(root)
+    root.mainloop()
 
 
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
 
