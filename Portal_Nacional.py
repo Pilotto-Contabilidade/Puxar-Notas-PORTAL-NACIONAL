@@ -165,13 +165,12 @@ def obter_situacao_e_numero_da_linha(linha):
     except Exception:
         pass
 
-    # Número da nota - tentar td com classe específica, depois fallback
+    # Número da nota
     try:
         td_num = linha.find_element(By.XPATH, ".//td[contains(@class,'td-numero')]")
         numero_nota = td_num.text.strip()
     except Exception:
         try:
-            # fallback: primeira coluna com dígitos
             tds = linha.find_elements(By.TAG_NAME, "td")
             for td in tds:
                 txt = td.text.strip()
@@ -184,12 +183,17 @@ def obter_situacao_e_numero_da_linha(linha):
     return situacao, numero_nota
 
 
-def baixar_xml_da_linha(driver, linha, num, competencia_str,
-                        situacoes_dict, log_fn=print):
+def baixar_xml_da_linha(driver,
+                        linha,
+                        num,
+                        competencia_str,
+                        situacoes_dict,
+                        canceladas_lista,
+                        log_fn=print):
     """
     Retornos possíveis:
-    - True       => baixou XML (nota da competência, autorizada ou cancelada)
-    - False      => ignorou linha (outra competência)
+    - True       => baixou XML (nota autorizada da competência)
+    - False      => ignorou linha (outra competência ou cancelada sem download)
     - "ANTERIOR" => achou emissão anterior à competência (para parar varredura)
     """
     try:
@@ -212,7 +216,20 @@ def baixar_xml_da_linha(driver, linha, num, competencia_str,
                 return "ANTERIOR"
             return False
 
-        # Se chegou aqui, é da competência desejada → BAIXA XML SEMPRE
+        # Se é da competência desejada e está CANCELADA:
+        if situacao == "Cancelada":
+            canceladas_lista.append({
+                "numero_nota": numero_nota,
+                "data_emissao": data_emissao,
+                "situacao": "Cancelada"
+            })
+            log_fn(
+                f"Linha {num}: NOTA CANCELADA (emissão {data_emissao}, nº {numero_nota}) → "
+                f"registrada para o relatório, sem download de XML."
+            )
+            return False  # não conta como XML baixado
+
+        # Se chegou aqui, é da competência desejada e NÃO é cancelada → BAIXA XML
         link_xml = linha.find_element(
             By.XPATH,
             ".//td[contains(@class,'td-opcoes')]"
@@ -232,7 +249,10 @@ def baixar_xml_da_linha(driver, linha, num, competencia_str,
         return False
 
 
-def processar_pagina(driver, competencia_str, situacoes_dict,
+def processar_pagina(driver,
+                     competencia_str,
+                     situacoes_dict,
+                     canceladas_lista,
                      log_fn=print):
     WebDriverWait(driver, TIMEOUT).until(
         EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]"))
@@ -243,7 +263,7 @@ def processar_pagina(driver, competencia_str, situacoes_dict,
     baixadas_na_pagina = 0
     for i, linha in enumerate(linhas, 1):
         resultado = baixar_xml_da_linha(
-            driver, linha, i, competencia_str, situacoes_dict, log_fn=log_fn
+            driver, linha, i, competencia_str, situacoes_dict, canceladas_lista, log_fn=log_fn
         )
         if resultado == "ANTERIOR":
             log_fn("Encontrada nota com emissão anterior à competência → encerrando varredura.")
@@ -254,7 +274,6 @@ def processar_pagina(driver, competencia_str, situacoes_dict,
 
     log_fn(f"→ {baixadas_na_pagina} notas (XML baixado) da competência {competencia_str} nesta página")
     return baixadas_na_pagina
-
 
 
 def tem_proxima_pagina(driver, log_fn=print):
@@ -279,7 +298,6 @@ def safe_float(val):
         s = str(val).strip()
         if not s:
             return 0.0
-        # Apenas troca vírgula por ponto (não remove o ponto decimal)
         s = s.replace(',', '.')
         return float(s)
     except Exception:
@@ -344,7 +362,6 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
             vServPrest = valores_dps.find(f'.//{{{nspace}}}vServPrest/{{{nspace}}}vServ')
             v_serv = safe_float(vServPrest.text) if vServPrest is not None else 0.0
 
-            # tribFed
             trib = valores_dps.find(f'.//{{{nspace}}}trib')
             tribFed = trib.find(f'.//{{{nspace}}}tribFed') if trib is not None else None
 
@@ -464,20 +481,23 @@ def carregar_notas_existentes(pasta_base, log_fn=print):
     log_fn(f"Total de notas já registradas: {len(NOTAS_EXISTENTES)}")
 
 
-def gerar_relatorio_para_pasta(pasta_xmls, competencia_str,
-                               situacoes_dict, log_fn=print):
+def gerar_relatorio_para_pasta(pasta_xmls,
+                               competencia_str,
+                               situacoes_dict,
+                               canceladas_lista,
+                               log_fn=print):
     try:
         xml_files = [f for f in os.listdir(pasta_xmls) if f.lower().endswith('.xml')]
         dados = []
-        cancelados_paths = []
 
+        # 1) Autorizadas (via XML)
         for xml_file in tqdm(xml_files, desc=f"Processando XMLs ({os.path.basename(pasta_xmls)})"):
             caminho = os.path.join(pasta_xmls, xml_file)
             data = parse_xml_por_nota(caminho, situacoes_dict=situacoes_dict)
             if not data:
                 continue
 
-            # Considera só notas da competência
+            # Apenas notas da competência
             if not data['data_emissao'] or not mesma_competencia(data['data_emissao'], competencia_str):
                 continue
 
@@ -485,11 +505,39 @@ def gerar_relatorio_para_pasta(pasta_xmls, competencia_str,
             if not data.get('situacao'):
                 data['situacao'] = 'Autorizada'
 
-            # Se for cancelada, marcar caminho para excluir depois
-            if data['situacao'] == 'Cancelada':
-                cancelados_paths.append(caminho)
-
             dados.append(data)
+
+        # 2) Canceladas (sem XML) → entram no mesmo DF, com informações mínimas
+        numeros_ja_inclusos = {d['numero_nota'] for d in dados if d.get('numero_nota')}
+
+        for c in canceladas_lista or []:
+            # Já são da competência, pois só adicionamos lá na função de página
+            num = c.get("numero_nota", "")
+            if num in numeros_ja_inclusos:
+                # Se por alguma razão existir no DF (não deveria), não duplicar
+                continue
+
+            dados.append({
+                'arquivo': '',
+                'numero_nota': num,
+                'emitente_nome': '',
+                'emitente_cnpj': '',
+                'tomador_nome': '',
+                'tomador_cnpj': '',
+                'data_emissao': c.get("data_emissao", ""),
+                'valor_bc': 0.0,
+                'valor_liq': 0.0,
+                'valor_servico': 0.0,
+                'descricao_serv': '',
+                'codigo_serv': '',
+                'situacao': c.get("situacao", "Cancelada"),
+                'total_retencoes': 0.0,
+                'irrf': 0.0,
+                'cp': 0.0,
+                'csll': 0.0,
+                'pis': 0.0,
+                'cofins': 0.0
+            })
 
         if not dados:
             log_fn(f"Nenhum dado (autorizado ou cancelado) encontrado em {pasta_xmls} para a competência.")
@@ -572,16 +620,6 @@ def gerar_relatorio_para_pasta(pasta_xmls, competencia_str,
 
         wb.save(relatorio_path)
 
-        # Agora remove os XMLs das notas canceladas
-        removidos = 0
-        for caminho in cancelados_paths:
-            try:
-                if os.path.exists(caminho):
-                    os.remove(caminho)
-                    removidos += 1
-            except Exception:
-                pass
-
         total_notas = len(df)
         total_valor_liq = df['Valor Líquido'].sum() if 'Valor Líquido' in df.columns else 0
         total_valor_bc = df['Valor BC'].sum() if 'Valor BC' in df.columns else 0
@@ -593,7 +631,6 @@ def gerar_relatorio_para_pasta(pasta_xmls, competencia_str,
         log_fn(f"Total valor líquido: R$ {total_valor_liq:,.2f}")
         log_fn(f"Total base cálculo: R$ {total_valor_bc:,.2f}")
         log_fn(f"Arquivo: {relatorio_path}")
-        log_fn(f"XMLs de notas CANCELADAS removidos da pasta: {removidos}")
         log_fn("=" * 80)
         log_fn("")
 
@@ -602,14 +639,16 @@ def gerar_relatorio_para_pasta(pasta_xmls, competencia_str,
         log_fn(f"Falha na geração do relatório em {pasta_xmls}: {e}")
 
 
-
-def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str,
-                                             novos_xmls, situacoes_dict,
+def organizar_xmls_e_gerar_relatorios_rodada(pasta_base,
+                                             competencia_str,
+                                             novos_xmls,
+                                             situacoes_dict,
+                                             canceladas_lista,
                                              log_fn=print):
     """
-    Organiza XMLs recém-baixados (autorizados + cancelados) por empresa
-    e gera relatórios para cada pasta de empresa afetada.
-    Depois, remove os XMLs das notas canceladas (baixa mas não “guarda”).
+    Organiza XMLs recém-baixados (somente autorizados) por empresa
+    e gera relatórios para cada pasta de empresa afetada,
+    incluindo também as notas canceladas (sem XML) no relatório.
     """
     global NOTAS_EXISTENTES
     pastas_afetadas = set()
@@ -649,9 +688,15 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str,
 
         pastas_afetadas.add(pasta_empresa_path)
 
-    # 2. Gerar relatório + remover XML de canceladas
+    # 2. Gerar relatório para cada pasta afetada, com autorizadas + canceladas
     for pasta in pastas_afetadas:
-        gerar_relatorio_para_pasta(pasta, competencia_str, situacoes_dict, log_fn=log_fn)
+        gerar_relatorio_para_pasta(
+            pasta,
+            competencia_str,
+            situacoes_dict,
+            canceladas_lista,
+            log_fn=log_fn
+        )
 
 
 # ============================= TKINTER APP =============================
@@ -805,8 +850,9 @@ class NFSeDownloaderApp:
         Fluxo principal multiempresas:
         - Lê a competência da interface
         - Para cada CNPJ (empresa), o usuário faz login e entra na tela de Notas Emitidas
-        - O robô baixa os XMLs da competência (autorizadas + canceladas)
-        - Organiza pastas por empresa e gera relatórios
+        - O robô baixa os XMLs da competência (somente autorizadas)
+        - Coleta as canceladas sem baixar XML
+        - Organiza pastas por empresa e gera relatórios (autorizadas + canceladas)
         """
         global COMPETENCIA_DESEJADA
 
@@ -842,6 +888,9 @@ class NFSeDownloaderApp:
                     if f.lower().endswith('.xml')
                 }
 
+                # Lista de notas canceladas desta empresa
+                canceladas_empresa = []
+
                 # Abre navegador
                 driver = criar_driver()
                 driver.get("https://www.nfse.gov.br/EmissorNacional")
@@ -864,6 +913,7 @@ class NFSeDownloaderApp:
                         driver,
                         COMPETENCIA_DESEJADA,
                         situacoes_dict,
+                        canceladas_empresa,
                         log_fn=self.log
                     )
 
@@ -874,9 +924,9 @@ class NFSeDownloaderApp:
                         self.log("Parando varredura: encontradas notas de emissão anterior à competência.")
                         break
 
-                    # 0: nenhuma nota elegível na página
+                    # 0: nenhuma nota elegível na página (nenhum XML baixado)
                     if resultado == 0:
-                        self.log("Nenhuma nota elegível (competência) nesta página.")
+                        self.log("Nenhuma nota autorizada da competência nesta página.")
                         if not tem_proxima_pagina(driver, log_fn=self.log):
                             break
                     else:
@@ -893,14 +943,16 @@ class NFSeDownloaderApp:
                 }
                 novos_xmls = sorted(list(xml_depois - xml_antes))
 
-                self.log(f"XMLs novos nesta empresa (autorizadas + canceladas): {len(novos_xmls)}")
+                self.log(f"XMLs novos nesta empresa (apenas autorizadas): {len(novos_xmls)}")
+                self.log(f"Notas canceladas só registradas (sem XML): {len(canceladas_empresa)}")
 
-                if novos_xmls:
+                if novos_xmls or canceladas_empresa:
                     organizar_xmls_e_gerar_relatorios_rodada(
                         PASTA_DOWNLOADS,
                         COMPETENCIA_DESEJADA,
                         novos_xmls,
                         situacoes_dict,
+                        canceladas_empresa,
                         log_fn=self.log
                     )
                 else:
@@ -936,4 +988,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
