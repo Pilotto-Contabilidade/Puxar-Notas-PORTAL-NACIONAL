@@ -21,6 +21,8 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
+import velopack
+
 # ============================= CONFIGURAÇÕES =============================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'Portal_Nacional_config.json')
@@ -37,7 +39,6 @@ URL_PORTAL = "https://www.nfse.gov.br/EmissorNacional"
 NOTAS_EXISTENTES = set()
 SITUACOES_POR_ARQUIVO = {}
 PDF_POR_ARQUIVO = {}
-
 # ============================= CONFIG =============================
 def carregar_config():
     if os.path.exists(CONFIG_FILE):
@@ -442,6 +443,20 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
     for emp in empresas:
         gerar_relatorio_para_empresa(pasta_base, emp, competencia_str, situacoes_dict, log_fn)
 
+def checar_updates(self):
+        manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
+        update_info = manager.check_for_updates()
+        if update_info:
+            self.log("Update encontrado. Baixando...")
+            manager.download_updates(update_info, progress_callback=self.update_progress)
+            if messagebox.askyesno("Update Pronto", "Aplicar update e reiniciar?"):
+                manager.apply_updates_and_restart(update_info)
+        else:
+            self.log("Nenhum update disponível.")
+
+def update_progress(self, progress):
+    self.log(f"Download progresso: {progress}%")
+
 # ============================= INTERFACE CUSTOMTKINTER =============================
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("dark-blue")
@@ -500,6 +515,8 @@ class NFSeDownloaderApp:
         self.btn_salvar = ctk.CTkButton(btnspace, text="Salvar Configurações", width=220, height=50, font=self.font_bold, fg_color="#059669", hover_color="#047857", command=self.salvar_configuracoes)
         self.btn_salvar.pack(side="left", padx=20)
         ctk.CTkButton(btnspace, text="Limpar Log", width=160, height=50, font=self.font_bold, fg_color="#dc2626", hover_color="#b91c1c", command=self.limpar_log).pack(side="left", padx=20)
+        self.btn_update = ctk.CTkButton(btnspace, text="Verificar Updates", command=self.checar_updates, width=140, height=50, fg_color="#f39c12")
+        self.btn_update.pack(side="left", padx=12)
         self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=150, height=35,
         font=self.font_title, fg_color="#1e40af", hover_color="#1d4ed8",
         command=self.iniciar_download)
@@ -607,6 +624,7 @@ class NFSeDownloaderApp:
 
 # ============================= FINAL =============================
 if __name__ == "__main__":
+    velopack.App().run()
     root = ctk.CTk()
     app = NFSeDownloaderApp(root)
     root.mainloop()
