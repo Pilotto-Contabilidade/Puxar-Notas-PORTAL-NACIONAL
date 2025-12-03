@@ -162,7 +162,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
 
         antes_xml = set(os.listdir(PASTA_DOWNLOADS))
         driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
-        aguardar_downloads(PASTA_DOWNLOADS, timeout=30)  # Shortcut para completar download XML
+        aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Shortcut para completar download XML
         novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
         if novos_xml:
             SITUACOES_POR_ARQUIVO[novos_xml[0]] = situacao
@@ -171,7 +171,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
             antes_pdf = set(os.listdir(PASTA_DOWNLOADS))
             link_pdf_elt = linha.find_element(By.XPATH, ".//td[contains(@class,'td-opcoes')]//a[contains(@href,'Download/DANFSe/')]")
             driver.get(link_pdf_elt.get_attribute("href"))
-            aguardar_downloads(PASTA_DOWNLOADS, timeout=30)  # Controller_completion download PDF
+            aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Controller_completion download PDF
             novos_pdf = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.pdf') and f not in antes_pdf]
             if novos_xml and novos_pdf:
                 PDF_POR_ARQUIVO[novos_xml[0]] = novos_pdf[0]
@@ -256,10 +256,11 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
         # === VALORES PRINCIPAIS ===
         v_bc = safe_float(root.findtext(f'.//{ns}valores/{ns}vBC'))
         v_liq = safe_float(root.findtext(f'.//{ns}valores/{ns}vLiq'))
+        v_serv = safe_float(root.findtext(f'.//{ns}valores/{ns}vServ'))
         v_total_ret = safe_float(root.findtext(f'.//{ns}valores/{ns}vTotalRet'))
 
         # === SERVIÇO + DESCRIÇÃO + CÓDIGO ===
-        v_serv = safe_float(root.findtext(f'.//{ns}infDPS/{ns}serv/{ns}vServ'))
+        v_serv = safe_float(root.findtext(f'.//{ns}infDPS/{ns}valores/{ns}vServPrest/{ns}vServ'))
         x_desc = ''
         codigo_serv = ''
         infDPS = root.find(f'.//{ns}infDPS')
@@ -618,11 +619,12 @@ class NFSeDownloaderApp:
     def checar_updates_auto(self):
         try:
             manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
+            self.log("Iniciando verificação de updates...")
             update_info = manager.check_for_updates()
             if update_info:
-                self.log("Nova versão encontrada! Clique em 'Verificar Updates' pra instalar.")
-        except:
-            pass
+                self.log(f"Dados de update: {update_info}")
+        except Exception as e:
+            self.log(f"Erro verificando update: {str(e)}")
 
     def update_progress(self, progress):
         self.log(f"Download progresso: {progress}%")
