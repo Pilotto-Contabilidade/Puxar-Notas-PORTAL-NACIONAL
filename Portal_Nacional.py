@@ -16,6 +16,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
 from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
@@ -447,55 +448,69 @@ ctk.set_default_color_theme("dark-blue")
 
 class NFSeDownloaderApp:
     def __init__(self, root):
+        # Definir fontes globais
+        self.font_normal = ctk.CTkFont(family="Segoe UI", size=12)
+        self.font_bold = ctk.CTkFont(family="Segoe UI", size=14, weight="bold")
+        self.font_title = ctk.CTkFont(family="Segoe UI", size=24, weight="bold")
+
         self.root = root
         self.root.title("Download NFS-e - Portal Nacional (Multiempresas)")
         self.root.geometry("1080x720")
         self.root.minsize(1000, 650)
+
+        # Ícone da janela
+        try:
+            self.root.iconbitmap(os.path.join(BASE_DIR, 'icone.ico'))
+        except Exception as e:
+            print(f"Erro ao carregar ícone: {e}")
+            pass 
 
         # Header
         header = ctk.CTkFrame(root, height=80, corner_radius=0, fg_color="#1e40af")
         header.pack(fill="x")
         header.pack_propagate(False)
         ctk.CTkLabel(header, text="Portal Nacional - Download de NFS-e (Multiempresas)",
-                     font=ctk.CTkFont(size=24, weight="bold"), text_color="white").pack(pady=20, padx=30, anchor="w")
+                     font=self.font_title, text_color="white").pack(pady=20, padx=30, anchor="w")
 
         main = ctk.CTkFrame(root)
         main.pack(fill="both", expand=True, padx=25, pady=20)
 
         # Config
         cfg = ctk.CTkFrame(main, corner_radius=12)
-        cfg.pack(fill="x", pady=(0, 20))
-        ctk.CTkLabel(cfg, text="Configurações", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=15, padx=25, anchor="w")
+        cfg.pack(fill="x", pady=(15, 25))
+        ctk.CTkLabel(cfg, text="Configurações", font=self.font_title).pack(pady=20, padx=30, anchor="w")
 
         r1 = ctk.CTkFrame(cfg)
-        r1.pack(fill="x", padx=25, pady=8)
-        ctk.CTkLabel(r1, text="Pasta de downloads:", width=160, anchor="w").pack(side="left")
+        r1.pack(fill="x", padx=30, pady=10)
+        ctk.CTkLabel(r1, text="Pasta de downloads:", font=self.font_bold, width=180, anchor="w").pack(side="left", padx=30)
         self.var_pasta = ctk.StringVar(value=PASTA_DOWNLOADS)
-        ctk.CTkEntry(r1, textvariable=self.var_pasta, height=40).pack(side="left", fill="x", expand=True, padx=(10,0))
-        ctk.CTkButton(r1, text="Procurar...", width=120, command=self.escolher_pasta).pack(side="right", padx=(10,0))
+        ctk.CTkEntry(r1, textvariable=self.var_pasta, height=45, font=self.font_normal).pack(side="left", fill="x", expand=True, padx=(15,0))
+        self.btn_procurar = ctk.CTkButton(r1, text="Procurar...", width=130, height=45, font=self.font_bold, fg_color="#2563eb", hover_color="#1d4ed8", command=self.escolher_pasta)
+        self.btn_procurar.pack(side="right", padx=(15,0))
 
         r2 = ctk.CTkFrame(cfg)
-        r2.pack(fill="x", padx=25, pady=8)
-        ctk.CTkLabel(r2, text="Competência (MM/AAAA):", width=160, anchor="w").pack(side="left")
+        r2.pack(fill="x", padx=30, pady=10)
+        ctk.CTkLabel(r2, text="Competência (MM/AAAA):", font=self.font_bold, width=180, anchor="w").pack(side="left", padx=30)
         self.var_comp = ctk.StringVar(value=COMPETENCIA_DESEJADA)
-        ctk.CTkEntry(r2, textvariable=self.var_comp, width=150, placeholder_text="ex: 11/2025").pack(side="left", padx=(10,0))
+        ctk.CTkEntry(r2, textvariable=self.var_comp, width=100, height=45, font=self.font_normal, placeholder_text="ex: 11/2025").pack(side="left", padx=15)
 
         # Botões
         btnspace = ctk.CTkFrame(main, fg_color="transparent")
-        btnspace.pack(fill="x", pady=10)
-        ctk.CTkButton(btnspace, text="Salvar Configurações", width=200, command=self.salvar_configuracoes).pack(side="left", padx=12)
-        ctk.CTkButton(btnspace, text="Limpar Log", width=140, command=self.limpar_log).pack(side="left", padx=12)
-        self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=320, height=50,
-                                       font=ctk.CTkFont(weight="bold"), fg_color="#1e40af", hover_color="#1e3a8a",
-                                       command=self.iniciar_download)
-        self.btn_start.pack(side="right", padx=12)
+        btnspace.pack(fill="x", pady=20)
+        self.btn_salvar = ctk.CTkButton(btnspace, text="Salvar Configurações", width=220, height=50, font=self.font_bold, fg_color="#059669", hover_color="#047857", command=self.salvar_configuracoes)
+        self.btn_salvar.pack(side="left", padx=20)
+        ctk.CTkButton(btnspace, text="Limpar Log", width=160, height=50, font=self.font_bold, fg_color="#dc2626", hover_color="#b91c1c", command=self.limpar_log).pack(side="left", padx=20)
+        self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=150, height=35,
+        font=self.font_title, fg_color="#1e40af", hover_color="#1d4ed8",
+        command=self.iniciar_download)
+        self.btn_start.pack(side="right", padx=20)
 
         # Log
-        logbox = ctk.CTkFrame(main, corner_radius=12)
-        logbox.pack(fill="both", expand=True, pady=(10,0))
-        ctk.CTkLabel(logbox, text="Log da execução", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(15,8), padx=25, anchor="w")
-        self.txt_log = ctk.CTkTextbox(logbox, font=ctk.CTkFont(family="Consolas", size=11))
-        self.txt_log.pack(fill="both", expand=True, padx=25, pady=(0,25))
+        logbox = ctk.CTkFrame(main, corner_radius=15)
+        logbox.pack(fill="both", expand=True, pady=(15,0))
+        ctk.CTkLabel(logbox, text="Log da execução", font=self.font_bold).pack(pady=(20,10), padx=30, anchor="w")
+        self.txt_log = ctk.CTkTextbox(logbox, font=ctk.CTkFont(family="Consolas", size=12))
+        self.txt_log.pack(fill="both", expand=True, padx=30, pady=(0,30))
 
     def log(self, msg):
         self.txt_log.insert("end", msg + "\n")
