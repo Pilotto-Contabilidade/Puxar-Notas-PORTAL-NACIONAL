@@ -443,20 +443,6 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
     for emp in empresas:
         gerar_relatorio_para_empresa(pasta_base, emp, competencia_str, situacoes_dict, log_fn)
 
-def checar_updates_auto(self):
-    try:
-        manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
-        update_info = manager.check_for_updates()
-        if update_info:
-            self.log(f"🚀 Nova versão {update_info.TargetVersion} disponível! Clica 'Verificar Updates' pra instalar.")
-            # Optional: messagebox automático if quiser
-            # messagebox.showinfo("Atualização", "Nova versão disponível!")
-    except:
-        pass  # Se erro, continua normal
-
-def update_progress(self, progress):
-    self.log(f"Download progresso: {progress}%")
-
 # ============================= INTERFACE CUSTOMTKINTER =============================
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("dark-blue")
@@ -476,7 +462,7 @@ class NFSeDownloaderApp:
         # Ícone da janela
         try:
             self.root.iconbitmap(os.path.join(BASE_DIR, 'icone.ico'))
-            self.after(5000, self.checar_updates_auto)  
+            self.root.after(5000, self.checar_updates_auto)  
         except Exception as e:
             print(f"Erro ao carregar ícone: {e}")
             pass 
@@ -623,9 +609,26 @@ class NFSeDownloaderApp:
         self.log("PROCESSO FINALIZADO COM SUCESSO!")
         self.log("="*90)
 
+    def checar_updates(self):
+        manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
+        update_info = manager.check_for_updates()
+        if update_info:
+            self.log("Update encontrado. Baixando...")
+            manager.download_updates(update_info, progress_callback=self.update_progress)
+            if messagebox.askyesno("Update Pronto", "Aplicar update e reiniciar?"):
+                manager.apply_updates_and_restart(update_info)
+        else:
+            self.log("Nenhum update disponível.")
+
+    def update_progress(self, progress):
+        self.log(f"Download progresso: {progress}%")
+
 # ============================= FINAL =============================
 if __name__ == "__main__":
-    velopack.App().run()
+    try:
+        velopack.App().run()
+    except Exception as e:
+        print("Velopack not loaded:", e)
     root = ctk.CTk()
     app = NFSeDownloaderApp(root)
     root.mainloop()
