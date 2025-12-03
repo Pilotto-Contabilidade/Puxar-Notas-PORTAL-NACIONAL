@@ -2,7 +2,5 @@
     "pasta_downloads": "Z:/01 FISCAL/NFSe/PRESTADOS",
     "competencia_desejada": "11/2025",
     "timeout": 30,
-    "headless": false,
-    "velocidade_linha": 0.8,
-    "velocidade_pagina": 2.5
+    "headless": false
 }

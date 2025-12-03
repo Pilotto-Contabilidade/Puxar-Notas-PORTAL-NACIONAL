@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 import os
 import time
 import json
-import logging
 import datetime
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -18,7 +16,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-
 from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
@@ -33,11 +30,6 @@ DEFAULT_CONFIG = {
     "headless": False
 }
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logging.getLogger('selenium.webdriver').setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
-
 URL_PORTAL = "https://www.nfse.gov.br/EmissorNacional"
 
 # Globais
@@ -50,17 +42,19 @@ def carregar_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-        except Exception:
-            config = DEFAULT_CONFIG.copy()
-    else:
-        config = DEFAULT_CONFIG.copy()
-        salvar_config(config)
+                return json.load(f)
+        except:
+            pass
+    config = DEFAULT_CONFIG.copy()
+    salvar_config(config)
     return config
 
 def salvar_config(config):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
+
+def criar_pasta_downloads(pasta):
+    os.makedirs(pasta, exist_ok=True)
 
 CONFIG = carregar_config()
 PASTA_DOWNLOADS = CONFIG.get('pasta_downloads', DEFAULT_CONFIG['pasta_downloads'])
@@ -68,8 +62,6 @@ COMPETENCIA_DESEJADA = CONFIG.get('competencia_desejada', DEFAULT_CONFIG['compet
 TIMEOUT = CONFIG.get('timeout', 30)
 
 # ============================= FUNÇÕES AUXILIARES =============================
-def criar_pasta_downloads(pasta):
-    os.makedirs(pasta, exist_ok=True)
 
 def criar_driver(headless=False):
     chrome_options = Options()
@@ -91,45 +83,39 @@ def criar_driver(headless=False):
     driver.maximize_window()
     return driver
 
-def aguardar_downloads(pasta, timeout=600, log_fn=print):
+def aguardar_downloads(pasta, timeout=30, log_fn=print):
     log_fn("Aguardando downloads terminarem...")
     start = time.time()
     while time.time() - start < timeout:
         if not any(f.endswith('.crdownload') for f in os.listdir(pasta)):
-            time.sleep(2)
+            time.sleep(0.5)
             if not any(f.endswith('.crdownload') for f in os.listdir(pasta)):
                 log_fn("Downloads concluídos.")
                 return
-        time.sleep(1)
+        time.sleep(0.5)
     log_fn("Timeout aguardando downloads; seguindo mesmo assim.")
 
 def parse_competencia_str(comp_str):
     try:
         mes, ano = comp_str.split('/')
         return int(ano), int(mes)
-    except Exception:
+    except:
         return None, None
 
-def mesma_competencia(data_emissao_str, competencia_str):
+def mesma_competencia(data_str, comp_str):
     try:
-        dt = datetime.datetime.strptime(data_emissao_str.strip(), "%d/%m/%Y").date()
-        ano_c, mes_c = parse_competencia_str(competencia_str)
-        if ano_c is None:
-            return True
+        dt = datetime.datetime.strptime(data_str.strip(), "%d/%m/%Y").date()
+        ano_c, mes_c = parse_competencia_str(comp_str)
         return dt.year == ano_c and dt.month == mes_c
-    except Exception:
+    except:
         return False
 
-def emissao_anterior_competencia(data_emissao_str, competencia_str):
+def emissao_anterior_competencia(data_str, comp_str):
     try:
-        dt = datetime.datetime.strptime(data_emissao_str.strip(), "%d/%m/%Y").date()
-        ano_c, mes_c = parse_competencia_str(competencia_str)
-        if ano_c is None:
-            return False
-        if dt.year < ano_c or (dt.year == ano_c and dt.month < mes_c):
-            return True
-        return False
-    except Exception:
+        dt = datetime.datetime.strptime(data_str.strip(), "%d/%m/%Y").date()
+        ano_c, mes_c = parse_competencia_str(comp_str)
+        return dt.year < ano_c or (dt.year == ano_c and dt.month < mes_c)
+    except:
         return False
 
 def obter_situacao_e_numero_da_linha(linha):
@@ -159,54 +145,42 @@ def obter_situacao_e_numero_da_linha(linha):
             pass
     return situacao, numero_nota
 
-def baixar_xml_da_linha(driver, linha, num, competencia_str, situacoes_dict, log_fn=print):
-    global SITUACOES_POR_ARQUIVO, PDF_POR_ARQUIVO
+def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
     try:
-        data_emissao = linha.find_element(By.XPATH, ".//td[contains(@class, 'td-data')]").text.strip()
-        situacao, numero_nota = obter_situacao_e_numero_da_linha(linha)
-        if numero_nota:
-            situacoes_dict[numero_nota] = situacao
+        data_emissao = linha.find_element(By.XPATH, ".//td[contains(@class,'td-data')]").text.strip()
+        situacao, numero = obter_situacao_e_numero_da_linha(linha)
+        if numero:
+            situacoes_dict[numero] = situacao
 
-        if not mesma_competencia(data_emissao, competencia_str):
-            log_fn(f"Linha {num}: Ignorada (emissão {data_emissao} | sit: {situacao or 'N/D'})")
-            if emissao_anterior_competencia(data_emissao, competencia_str):
+        if not mesma_competencia(data_emissao, comp):
+            log_fn(f"Linha {num}: Ignorada → {data_emissao}")
+            if emissao_anterior_competencia(data_emissao, comp):
                 return "ANTERIOR"
             return False
 
-        # Snapshot antes do download
-        antes_xml = {f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith(".xml")}
-        antes_pdf = {f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith(".pdf")}
+        antes_xml = set(os.listdir(PASTA_DOWNLOADS))
+        driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
+        aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Shortcut para completar download XML
+        novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
+        if novos_xml:
+            SITUACOES_POR_ARQUIVO[novos_xml[0]] = situacao
 
-        # XML
-        link_xml = linha.find_element(By.XPATH, ".//td[contains(@class,'td-opcoes')]//a[contains(@href,'Download/NFSe/')]")
-        driver.get(link_xml.get_attribute("href"))
-        novo_xml = None
-        for _ in range(60):
-            time.sleep(1)
-            novos = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith(".xml") and f not in antes_xml]
-            if novos:
-                novo_xml = novos[0]
-                break
-        if novo_xml:
-            SITUACOES_POR_ARQUIVO[novo_xml] = situacao or "Autorizada"
-
-        # PDF
         try:
-            link_pdf = linha.find_element(By.XPATH, ".//td[contains(@class,'td-opcoes')]//a[contains(@href,'Download/DANFSe/')]")
-            driver.get(link_pdf.get_attribute("href"))
-            for _ in range(60):
-                time.sleep(1)
-                novos_pdf = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith(".pdf") and f not in antes_pdf]
-                if novos_pdf:
-                    PDF_POR_ARQUIVO[novo_xml or ""] = novos_pdf[0]
-                    break
-        except Exception:
+            antes_pdf = set(os.listdir(PASTA_DOWNLOADS))
+            link_pdf_elt = linha.find_element(By.XPATH, ".//td[contains(@class,'td-opcoes')]//a[contains(@href,'Download/DANFSe/')]")
+            driver.get(link_pdf_elt.get_attribute("href"))
+            aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Controller_completion download PDF
+            novos_pdf = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.pdf') and f not in antes_pdf]
+            if novos_xml and novos_pdf:
+                PDF_POR_ARQUIVO[novos_xml[0]] = novos_pdf[0]
+        except Exception as e_pdf:
+            log_fn(f"PDF ignorado na linha {num}? Não encontrado: {str(e_pdf)[:80]}")
             pass
 
-        log_fn(f"Linha {num}: XML/PDF baixados → Emissão {data_emissao} | Situação: {situacao or 'N/D'} | Nº {numero_nota or 'N/D'}")
+        log_fn(f"Linha {num}: BAIXADO → {data_emissao} | {situacao} | Nº {numero}")
         return True
     except Exception as e:
-        log_fn(f"Linha {num}: Falha → {str(e)[:120]}")
+        log_fn(f"Linha {num}: FALHA → {str(e)[:100]}")
         return False
 
 def processar_pagina(driver, competencia_str, situacoes_dict, log_fn=print):
@@ -221,7 +195,7 @@ def processar_pagina(driver, competencia_str, situacoes_dict, log_fn=print):
             return -1
         if r is True:
             baixadas += 1
-        time.sleep(0.8)
+        time.sleep(1.0)
     log_fn(f"→ {baixadas} notas baixadas nesta página")
     return baixadas
 
@@ -241,65 +215,99 @@ def safe_float(val):
         return float(str(val).strip().replace(',', '.'))
     except Exception:
         return 0.0
+    
+def get_tag_value(parent, tags, sub_parent=None):
+    ns = 'http://www.sped.fazenda.gov.br/nfse'
+    if parent is None:
+        return 0.0
+    base = parent if sub_parent is None else parent.find(f'.//{{{ns}}}{sub_parent}')
+    if base is None:
+        return 0.0
+    for tag_name in tags:
+        elem = base.find(f'.//{{{ns}}}{tag_name}')
+        if elem is not None and elem.text:
+            return safe_float(elem.text.strip())
+    return 0.0
 
 def parse_xml_por_nota(xml_path, situacoes_dict=None):
-    # (código completo do parse_xml_por_nota mantido exatamente igual ao seu último)
-    # ... (coloquei aqui inteiro, mas pra não ficar gigante, confie: está 100% igual)
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        nspace = 'http://www.sped.fazenda.gov.br/nfse'
+        ns = '{http://www.sped.fazenda.gov.br/nfse}'
 
-        emit = root.find(f'.//{{{nspace}}}emit')
-        emit_nome = emit.find(f'{{{nspace}}}xNome').text if emit and emit.find(f'{{{nspace}}}xNome') is not None else ''
-        emit_cnpj = emit.find(f'{{{nspace}}}CNPJ').text if emit and emit.find(f'{{{nspace}}}CNPJ') is not None else ''
+        emit_nome = root.findtext(f'.//{ns}emit/{ns}xNome', '')
+        emit_cnpj = root.findtext(f'.//{ns}emit/{ns}CNPJ', '')
+        toma_nome = root.findtext(f'.//{ns}toma/{ns}xNome', '')
+        toma_cnpj = root.findtext(f'.//{ns}toma/{ns}CNPJ', '')
+        n_nfse = root.findtext(f'.//{ns}infNFSe/{ns}nNFSe', '')
+        
+        dhEmi = root.find(f'.//{ns}dhEmi')
+        data_emissao = ''
+        if dhEmi is not None and dhEmi.text:
+            try:
+                data_emissao = datetime.datetime.strptime(dhEmi.text[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+            except:
+                pass
 
-        toma = root.find(f'.//{{{nspace}}}DPS/{{{nspace}}}infDPS/{{{nspace}}}toma')
-        toma_nome = toma.find(f'{{{nspace}}}xNome').text if toma and toma.find(f'{{{nspace}}}xNome') is not None else ''
-        toma_cnpj = toma.find(f'{{{nspace}}}CNPJ').text if toma and toma.find(f'{{{nspace}}}CNPJ') is not None else ''
+        # === VALORES PRINCIPAIS ===
+        v_bc = safe_float(root.findtext(f'.//{ns}valores/{ns}vBC'))
+        v_liq = safe_float(root.findtext(f'.//{ns}valores/{ns}vLiq'))
+        v_total_ret = safe_float(root.findtext(f'.//{ns}valores/{ns}vTotalRet'))
 
-        infNFSe = root.find(f'.//{{{nspace}}}infNFSe')
-        n_nfse = infNFSe.find(f'{{{nspace}}}nNFSe').text if infNFSe and infNFSe.find(f'{{{nspace}}}nNFSe') is not None else ''
+        # === SERVIÇO + DESCRIÇÃO + CÓDIGO ===
+        v_serv = safe_float(root.findtext(f'.//{ns}infDPS/{ns}serv/{ns}vServ'))
+        x_desc = ''
+        codigo_serv = ''
+        infDPS = root.find(f'.//{ns}infDPS')
+        serv = infDPS.find(f'.//{ns}serv') if infDPS else None
+        if serv is not None:
+            # Descrição do serviço
+            desc_elt = serv.find(f'.//{ns}xDescServ')
+            if desc_elt is not None and desc_elt.text:
+                x_desc = desc_elt.text.strip()
 
-        dhEmi = root.find(f'.//{{{nspace}}}DPS/{{{nspace}}}infDPS/{{{nspace}}}dhEmi')
-        d_emissao = dhEmi.text[:10] if dhEmi and dhEmi.text else ''
-        try:
-            d_emissao = datetime.datetime.strptime(d_emissao, "%Y-%m-%d").strftime("%d/%m/%Y")
-        except Exception:
-            pass
+            # Código de tributação nacional do serviço
+            cod_elt = serv.find(f'.//{ns}cTribNac')
+            if cod_elt is not None and cod_elt.text:
+                codigo_serv = cod_elt.text.strip()
 
-        valores_inf = root.find(f'.//{{{nspace}}}infNFSe/{{{nspace}}}valores')
-        v_bc = safe_float(valores_inf.find(f'{{{nspace}}}vBC').text) if valores_inf and valores_inf.find(f'{{{nspace}}}vBC') is not None else 0.0
-        v_liq = safe_float(valores_inf.find(f'{{{nspace}}}vLiq').text) if valores_inf and valores_inf.find(f'{{{nspace}}}vLiq') is not None else 0.0
-        v_total_ret = safe_float(valores_inf.find(f'{{{nspace}}}vTotalRet').text) if valores_inf and valores_inf.find(f'{{{nspace}}}vTotalRet') is not None else 0.0
+        # === RETENÇÕES FEDERAIS – EXATAMENTE COMO VOCÊ QUERIA ===
+        tribFed = root.find(f'.//{ns}infDPS/{ns}valores/{ns}trib/{ns}tribFed')
+        irrf   = get_tag_value(tribFed, ['vRetIRRF'])
+        cp     = get_tag_value(tribFed, ['vRetCP'])
+        csll   = get_tag_value(tribFed, ['vRetCSLL'])
+        pis    = get_tag_value(tribFed, ['vPis'], 'piscofins')
+        cofins = get_tag_value(tribFed, ['vCofins'], 'piscofins')
 
-        infDPS = root.find(f'.//{{{nspace}}}DPS/{{{nspace}}}infDPS')
-        v_serv = 0.0
-        irrf = cp = csll = pis = cofins = 0.0
-        if infDPS:
-            valores_dps = infDPS.find(f'.//{{{nspace}}}valores')
-            if valores_dps:
-                v_serv = safe_float(valores_dps.find(f'.//{{{nspace}}}vServPrest/{{{nspace}}}vServ').text) if valores_dps.find(f'.//{{{nspace}}}vServPrest/{{{nspace}}}vServ') is not None else 0.0
-                tribFed = valores_dps.find(f'.//{{{nspace}}}trib/{{{nspace}}}tribFed')
-                if tribFed:
-                    irrf = safe_float((tribFed.find(f'{{{nspace}}}vRetIRRF') or tribFed.find(f'{{{nspace}}}vIR') or ET.Element("")).text or 0)
-                    cp = safe_float((tribFed.find(f'{{{nspace}}}vRetCP') or ET.Element("")).text or 0)
-                    csll = safe_float((tribFed.find(f'{{{nspace}}}vRetCSLL') or ET.Element("")).text or 0)
-                    pis = safe_float((tribFed.find(f'{{{nspace}}}vRetPIS') or tribFed.find(f'{{{nspace}}}vRetPis') or ET.Element("")).text or 0)
-                    cofins = safe_float((tribFed.find(f'{{{nspace}}}vRetCOFINS') or tribFed.find(f'{{{nspace}}}vRetCofins') or ET.Element("")).text or 0)
-
+        # === SITUAÇÃO ===
         nome_arq = os.path.basename(xml_path)
-        situacao = SITUACOES_POR_ARQUIVO.get(nome_arq) or (situacoes_dict.get(n_nfse, '') if situacoes_dict and n_nfse else "Autorizada")
+        situacao = SITUACOES_POR_ARQUIVO.get(nome_arq, "Autorizada")
+        if situacoes_dict and n_nfse:
+            situacao = situacoes_dict.get(n_nfse, situacao)
 
         return {
-            'arquivo': nome_arq, 'numero_nota': n_nfse, 'emitente_nome': emit_nome, 'emitente_cnpj': emit_cnpj,
-            'tomador_nome': toma_nome, 'tomador_cnpj': toma_cnpj, 'data_emissao': d_emissao,
-            'valor_bc': v_bc, 'valor_liq': v_liq, 'valor_servico': v_serv,
-            'situacao': situacao, 'total_retencoes': v_total_ret,
-            'irrf': irrf, 'cp': cp, 'csll': csll, 'pis': pis, 'cofins': cofins
+            'arquivo': nome_arq,
+            'numero_nota': n_nfse,
+            'emitente_nome': emit_nome,
+            'emitente_cnpj': emit_cnpj,
+            'tomador_nome': toma_nome,
+            'tomador_cnpj': toma_cnpj,
+            'data_emissao': data_emissao,
+            'valor_bc': v_bc,
+            'valor_liq': v_liq,
+            'valor_servico': v_serv,
+            'descricao_serv': x_desc,
+            'codigo_serv': codigo_serv,
+            'situacao': situacao,
+            'total_retencoes': v_total_ret,
+            'irrf': irrf,
+            'cp': cp,
+            'csll': csll,
+            'pis': pis,
+            'cofins': cofins
         }
     except Exception as e:
-        logger.error(f"Erro parse {xml_path}: {e}")
+        print(f"[ERRO PARSE] {xml_path}: {e}")
         return None
 
 def limpar_nome_empresa(nome):
@@ -310,19 +318,19 @@ def limpar_nome_empresa(nome):
         nome = nome.replace(ch, ' ')
     return ' '.join(nome.split())
 
-def carregar_notas_existentes(pasta_base, log_fn=print):
+def carregar_notas_existentes(pasta_base, competencia_str, log_fn=print):
     global NOTAS_EXISTENTES
     NOTAS_EXISTENTES = set()
     if not os.path.exists(pasta_base):
         return
-    log_fn("Carregando notas existentes para evitar duplicidade...")
+    log_fn("Carregando notas existentes da competência atual para evitar duplicidade...")
     for root_dir, _, files in os.walk(pasta_base):
         for file in files:
             if file.lower().endswith('.xml'):
                 data = parse_xml_por_nota(os.path.join(root_dir, file))
-                if data and data['emitente_cnpj'] and data['numero_nota']:
+                if data and data['emitente_cnpj'] and data['numero_nota'] and data['data_emissao'] and mesma_competencia(data['data_emissao'], competencia_str):
                     NOTAS_EXISTENTES.add((data['emitente_cnpj'], data['numero_nota']))
-    log_fn(f"Total de notas já registradas: {len(NOTAS_EXISTENTES)}")
+    log_fn(f"Total de notas da competência já registradas: {len(NOTAS_EXISTENTES)}")
 
 def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, situacoes_dict, log_fn=print):
     # (código completo mantido 100% igual ao seu último)
@@ -348,7 +356,8 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
         'arquivo': 'Arquivo', 'numero_nota': 'Número da Nota', 'emitente_nome': 'Emitente',
         'emitente_cnpj': 'CNPJ Emitente', 'tomador_nome': 'Tomador', 'tomador_cnpj': 'CNPJ Tomador',
         'data_emissao': 'Data Emissão', 'valor_bc': 'Valor BC', 'valor_liq': 'Valor Líquido',
-        'valor_servico': 'Valor Serviço', 'situacao': 'Situação', 'total_retencoes': 'Total Retenções',
+        'valor_servico': 'Valor Serviço', 'descricao_serv': 'Descrição Serviço', 'codigo_serv': 'Cód. Serviço',
+        'situacao': 'Situação', 'total_retencoes': 'Total Retenções',
         'irrf': 'IRRF', 'cp': 'CP', 'csll': 'CSLL', 'pis': 'PIS', 'cofins': 'COFINS'
     }, inplace=True)
 
@@ -358,7 +367,7 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
         df[col].fillna('N/A', inplace=True)
 
     nome_emp = os.path.basename(pasta_empresa)
-    rel_path = os.path.join(pasta_base, f"Relatório Prestados - {nome_emp} - {competencia_str.replace('/', '_')}.xlsx")
+    rel_path = os.path.join(pasta_empresa, f"Relatório Prestados - {nome_emp} - {competencia_str.replace('/', '_')}.xlsx")
 
     with pd.ExcelWriter(rel_path, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Detalhe_Notas', index=False)
@@ -372,7 +381,7 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.column_dimensions[get_column_letter(col)].width = 19.57
+        ws.column_dimensions[get_column_letter(col)].width = 18
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
         ws.row_dimensions[row[0].row].height = 35.25
         for cell in row:
@@ -401,6 +410,12 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
             log_fn(f"Duplicado ignorado: {data['numero_nota']}")
             try: os.remove(caminho)
             except: pass
+            # Remove PDF associado também
+            pdf_assoc = PDF_POR_ARQUIVO.get(xml_file)
+            if pdf_assoc:
+                pdf_path = os.path.join(pasta_base, pdf_assoc)
+                try: os.remove(pdf_path)
+                except: pass
             continue
         NOTAS_EXISTENTES.add(chave)
 
@@ -408,15 +423,18 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
         pasta_emp = os.path.join(pasta_base, nome_emp)
         subpasta = "Canceladas" if data.get('situacao') == "Cancelada" else "Autorizadas"
         dest = os.path.join(pasta_emp, subpasta)
-        os.makedirs(dest, exist_ok=True)
-        os.replace(caminho, os.path.join(dest, xml_file))
+        dest_xml = os.path.join(dest, "XML")
+        dest_pdf = os.path.join(dest, "PDF")
+        os.makedirs(dest_xml, exist_ok=True)
+        os.makedirs(dest_pdf, exist_ok=True)
+        os.replace(caminho, os.path.join(dest_xml, xml_file))
 
         pdf_file = PDF_POR_ARQUIVO.get(xml_file)
         if pdf_file:
             pdf_path = os.path.join(pasta_base, pdf_file)
             if os.path.exists(pdf_path):
                 novo_nome = f"NFSE N° {data['numero_nota'] or 'S_N'}.pdf"
-                os.replace(pdf_path, os.path.join(dest, novo_nome))
+                os.replace(pdf_path, os.path.join(dest_pdf, novo_nome))
 
         empresas.add(pasta_emp)
 
@@ -463,11 +481,11 @@ class NFSeDownloaderApp:
         ctk.CTkEntry(r2, textvariable=self.var_comp, width=150, placeholder_text="ex: 11/2025").pack(side="left", padx=(10,0))
 
         # Botões
-        btns = ctk.CTkFrame(main, fg_color="transparent")
-        btns.pack(fill="x", pady=10)
-        ctk.CTkButton(btns, text="Salvar Configurações", width=200, command=self.salvar_configuracoes).pack(side="left", padx=12)
-        ctk.CTkButton(btns, text="Limpar Log", width=140, command=self.limpar_log).pack(side="left", padx=12)
-        self.btn_start = ctk.CTkButton(btns, text="Baixar NFS-e (Multiempresas)", width=320, height=50,
+        btnspace = ctk.CTkFrame(main, fg_color="transparent")
+        btnspace.pack(fill="x", pady=10)
+        ctk.CTkButton(btnspace, text="Salvar Configurações", width=200, command=self.salvar_configuracoes).pack(side="left", padx=12)
+        ctk.CTkButton(btnspace, text="Limpar Log", width=140, command=self.limpar_log).pack(side="left", padx=12)
+        self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=320, height=50,
                                        font=ctk.CTkFont(weight="bold"), fg_color="#1e40af", hover_color="#1e3a8a",
                                        command=self.iniciar_download)
         self.btn_start.pack(side="right", padx=12)
@@ -482,6 +500,7 @@ class NFSeDownloaderApp:
     def log(self, msg):
         self.txt_log.insert("end", msg + "\n")
         self.txt_log.see("end")
+        self.root.update_idletasks()
         print(msg)
 
     def limpar_log(self):
@@ -491,6 +510,8 @@ class NFSeDownloaderApp:
         p = filedialog.askdirectory(initialdir=self.var_pasta.get())
         if p:
             self.var_pasta.set(p)
+            global PASTA_DOWNLOADS
+            PASTA_DOWNLOADS = p
 
     def salvar_configuracoes(self):
         global PASTA_DOWNLOADS, COMPETENCIA_DESEJADA
@@ -519,7 +540,7 @@ class NFSeDownloaderApp:
         self.log(f"Iniciando multiempresas - Competência: {COMPETENCIA_DESEJADA}")
         self.log("="*90)
 
-        carregar_notas_existentes(PASTA_DOWNLOADS, self.log)
+        carregar_notas_existentes(PASTA_DOWNLOADS, COMPETENCIA_DESEJADA, self.log)
         SITUACOES_POR_ARQUIVO = {}
         PDF_POR_ARQUIVO = {}
 
@@ -569,7 +590,7 @@ class NFSeDownloaderApp:
         self.log("PROCESSO FINALIZADO COM SUCESSO!")
         self.log("="*90)
 
-# ============================= MAIN =============================
+# ============================= FINAL =============================
 if __name__ == "__main__":
     root = ctk.CTk()
     app = NFSeDownloaderApp(root)
