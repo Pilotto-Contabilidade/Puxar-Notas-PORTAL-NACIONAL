@@ -90,11 +90,11 @@ def aguardar_downloads(pasta, timeout=30, log_fn=print):
     start = time.time()
     while time.time() - start < timeout:
         if not any(f.endswith('.crdownload') for f in os.listdir(pasta)):
-            time.sleep(0.5)
+            time.sleep(2.5)
             if not any(f.endswith('.crdownload') for f in os.listdir(pasta)):
                 log_fn("Downloads concluídos.")
                 return
-        time.sleep(0.5)
+        time.sleep(2.5)
     log_fn("Timeout aguardando downloads; seguindo mesmo assim.")
 
 def parse_competencia_str(comp_str):
