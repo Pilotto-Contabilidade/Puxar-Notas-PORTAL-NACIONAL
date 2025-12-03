@@ -162,7 +162,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
 
         antes_xml = set(os.listdir(PASTA_DOWNLOADS))
         driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
-        aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Shortcut para completar download XML
+        aguardar_downloads(PASTA_DOWNLOADS, timeout=30)  # Shortcut para completar download XML
         novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
         if novos_xml:
             SITUACOES_POR_ARQUIVO[novos_xml[0]] = situacao
@@ -171,7 +171,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
             antes_pdf = set(os.listdir(PASTA_DOWNLOADS))
             link_pdf_elt = linha.find_element(By.XPATH, ".//td[contains(@class,'td-opcoes')]//a[contains(@href,'Download/DANFSe/')]")
             driver.get(link_pdf_elt.get_attribute("href"))
-            aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Controller_completion download PDF
+            aguardar_downloads(PASTA_DOWNLOADS, timeout=30)  # Controller_completion download PDF
             novos_pdf = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.pdf') and f not in antes_pdf]
             if novos_xml and novos_pdf:
                 PDF_POR_ARQUIVO[novos_xml[0]] = novos_pdf[0]
@@ -239,8 +239,10 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
 
         emit_nome = root.findtext(f'.//{ns}emit/{ns}xNome', '')
         emit_cnpj = root.findtext(f'.//{ns}emit/{ns}CNPJ', '')
+        emit_cpf = root.findtext(f'.//{ns}emit/{ns}CPF', '')
         toma_nome = root.findtext(f'.//{ns}toma/{ns}xNome', '')
         toma_cnpj = root.findtext(f'.//{ns}toma/{ns}CNPJ', '')
+        toma_cpf = root.findtext(f'.//{ns}toma/{ns}CPF', '')
         n_nfse = root.findtext(f'.//{ns}infNFSe/{ns}nNFSe', '')
         
         dhEmi = root.find(f'.//{ns}dhEmi')
@@ -281,6 +283,10 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
         pis    = get_tag_value(tribFed, ['vPis'], 'piscofins')
         cofins = get_tag_value(tribFed, ['vCofins'], 'piscofins')
 
+        # === DOCUMENTO EMITENTE E TOMADOR: CNPJ OU CPF ===
+        emit_documento = emit_cnpj if emit_cnpj else emit_cpf  # Fallback: CNPJ first, then CPF
+        toma_documento = toma_cnpj if toma_cnpj else toma_cpf
+
         # === SITUAÇÃO ===
         nome_arq = os.path.basename(xml_path)
         situacao = SITUACOES_POR_ARQUIVO.get(nome_arq, "Autorizada")
@@ -291,9 +297,9 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
             'arquivo': nome_arq,
             'numero_nota': n_nfse,
             'emitente_nome': emit_nome,
-            'emitente_cnpj': emit_cnpj,
+            'emitente_cnpj': emit_documento,
             'tomador_nome': toma_nome,
-            'tomador_cnpj': toma_cnpj,
+            'tomador_cnpj': toma_documento,
             'data_emissao': data_emissao,
             'valor_bc': v_bc,
             'valor_liq': v_liq,
@@ -502,10 +508,10 @@ class NFSeDownloaderApp:
         self.btn_salvar = ctk.CTkButton(btnspace, text="Salvar Configurações", width=220, height=50, font=self.font_bold, fg_color="#059669", hover_color="#047857", command=self.salvar_configuracoes)
         self.btn_salvar.pack(side="left", padx=20)
         ctk.CTkButton(btnspace, text="Limpar Log", width=160, height=50, font=self.font_bold, fg_color="#dc2626", hover_color="#b91c1c", command=self.limpar_log).pack(side="left", padx=20)
-        self.btn_update = ctk.CTkButton(btnspace, text="Verificar Updates", command=self.checar_updates, width=140, height=50, fg_color="#f39c12")
+        self.btn_update = ctk.CTkButton(btnspace, text="Verificar Updates", width=220, height=50, font=self.font_bold, fg_color="#2563eb", hover_color="#1d4ed8", command=self.checar_updates_auto)
         self.btn_update.pack(side="left", padx=12)
-        self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=150, height=35,
-        font=self.font_title, fg_color="#1e40af", hover_color="#1d4ed8",
+        self.btn_start = ctk.CTkButton(btnspace, text="Baixar NFS-e (Multiempresas)", width=350, height=55,
+        font=self.font_bold, fg_color="#1e40af", hover_color="#1d4ed8",
         command=self.iniciar_download)
         self.btn_start.pack(side="right", padx=20)
 
@@ -609,16 +615,14 @@ class NFSeDownloaderApp:
         self.log("PROCESSO FINALIZADO COM SUCESSO!")
         self.log("="*90)
 
-    def checar_updates(self):
-        manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
-        update_info = manager.check_for_updates()
-        if update_info:
-            self.log("Update encontrado. Baixando...")
-            manager.download_updates(update_info, progress_callback=self.update_progress)
-            if messagebox.askyesno("Update Pronto", "Aplicar update e reiniciar?"):
-                manager.apply_updates_and_restart(update_info)
-        else:
-            self.log("Nenhum update disponível.")
+    def checar_updates_auto(self):
+        try:
+            manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
+            update_info = manager.check_for_updates()
+            if update_info:
+                self.log("Nova versão encontrada! Clique em 'Verificar Updates' pra instalar.")
+        except:
+            pass
 
     def update_progress(self, progress):
         self.log(f"Download progresso: {progress}%")
