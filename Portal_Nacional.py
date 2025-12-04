@@ -162,7 +162,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
 
         antes_xml = set(os.listdir(PASTA_DOWNLOADS))
         driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
-        aguardar_downloads(PASTA_DOWNLOADS, timeout=0.5)  # Shortcut para completar download XML
+        aguardar_downloads(PASTA_DOWNLOADS, timeout=0.1)  # Shortcut para completar download XML
         novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
         if novos_xml:
             SITUACOES_POR_ARQUIVO[novos_xml[0]] = situacao
@@ -603,7 +603,7 @@ class NFSeDownloaderApp:
                 if novos:
                     organizar_xmls_e_gerar_relatorios_rodada(PASTA_DOWNLOADS, COMPETENCIA_DESEJADA, novos, situacoes_dict, self.log)
             except Exception as e:
-                self.log(f"ERRO na empresa {empresa}: {e}")
+                self.log(f"ERRO na empresa {empresa}: SEM MOVIMENTO")
             finally:
                 if driver:
                     try: driver.quit()
