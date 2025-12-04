@@ -618,7 +618,7 @@ class NFSeDownloaderApp:
 
     def checar_updates_auto(self):
         try:
-            manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases/download")
+            manager = velopack.UpdateManager("https://github.com/Pilotto-Contabilidade/Puxar-Notas-PORTAL-NACIONAL/releases")
             self.log("Iniciando verificação de updates...")
             update_info = manager.check_for_updates()
             if update_info:
