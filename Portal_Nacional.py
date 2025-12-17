@@ -4,6 +4,9 @@ import datetime
 import xml.etree.ElementTree as ET
 import pandas as pd
 from tqdm import tqdm
+import re
+import pdfplumber
+import threading
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -29,14 +32,14 @@ MODO = 'prestados'
 # Defaults baseados no modo
 def get_defaults():
     if MODO == 'tomados':
-        return r"C:\\NFS-e\\PortalNacionalTomados", "11/2025"
+        return r"Z:\01 FISCAL\NFSe\TOMADOS", "11/2025"
     else:
-        return r"C:\\NFS-e\\PortalNacional", "11/2025"
+        return r"Z:\01 FISCAL\NFSe\PRESTADOS", "11/2025"
 
 PASTA_DOWNLOADS_DEFAULT, COMPETENCIA_DESEJADA_DEFAULT = get_defaults()
 TIMEOUT = 30
 
-# ============================= FUNÇÕES AUXILIARES =============================
+# Funções auxiliares
 
 def criar_driver(headless=False):
     chrome_options = Options()
@@ -217,6 +220,51 @@ def get_tag_value(parent, tags, sub_parent=None):
             return safe_float(elem.text.strip())
     return 0.0
 
+def extrair_texto_pdf(pdf_path):
+    """Extrai todo o texto de um PDF usando pdfplumber."""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            texto_completo = ""
+            for page in pdf.pages:
+                texto_pagina = page.extract_text()
+                if texto_pagina:
+                    texto_completo += texto_pagina + "\n"
+            return texto_completo.strip()
+    except Exception as e:
+        print(f"Erro ao extrair texto do PDF {pdf_path}: {e}")
+        return ""
+
+def parse_dados_nfse_pdf(texto):
+    """Parseia dados específicos do texto extraído do PDF de NFS-e."""
+    dados = {}
+
+    # Captura textos após os títulos concatenados
+    match = re.search(r'SimplesNacionalnaDatadeCompetência\s+RegimedeApuraçãoTributáriapeloSN\s*\n(.*?)\s+(.*?)\s*\n', texto, re.IGNORECASE | re.DOTALL)
+    if match:
+        simples = match.group(1).strip()
+        regime = match.group(2).strip()
+        # Formatar textos com substituições manuais
+        simples = re.sub(r'Optante-MicroempreendedorIndividual\(MEI\)', 'Optante - Microempreendedor Individual (MEI)', simples)
+        simples = re.sub(r'Optante-MicroempresaouEmpresadePequenoPorte\(ME/EPP\)', 'Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)', simples)
+        simples = re.sub(r'Nãooptante', 'Não optante', simples)
+        regime = re.sub(r'RegimedeapuraçãodostributosfederaisemunicipalpeloSimplesNacional', 'Regime de apuração dos tributos federais e municipal pelo Simples Nacional', regime)
+        # Adicionar espaços adicionais se necessário
+        dados['simples_nacional'] = simples
+        dados['regime_apuracao'] = regime
+
+    # Captura valor do ISSQN (Apurado ou Retido)
+    match_issqn = re.search(r'ISSQN(?:Apurado|Retido)\s*\n([\d.,-]+)', texto, re.IGNORECASE | re.DOTALL)
+    if match_issqn:
+        valor = match_issqn.group(1).strip()
+        valor = valor.replace('R$', '').replace('.', '').replace(',', '.').strip()
+        try:
+            valor = float(valor)
+        except:
+            pass
+        dados['issqn_apurado'] = valor
+
+    return dados
+
 def parse_xml_por_nota(xml_path, situacoes_dict=None):
     try:
         tree = ET.parse(xml_path)
@@ -266,6 +314,17 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
         pis    = get_tag_value(tribFed, ['vPis'], 'piscofins')
         cofins = get_tag_value(tribFed, ['vCofins'], 'piscofins')
 
+        # === CAMPOS ADICIONAIS ===
+        iss_retido = 'N/A'
+        valor_iss_retido = 0.0
+        tpRet = root.findtext(f'.//{ns}tpRetISSQN', '')
+        if tpRet == '2':
+            iss_retido = 'SIM'
+            valor_iss_retido = safe_float(root.findtext(f'.//{ns}vISSQN', ''))
+        elif tpRet == '1':
+            iss_retido = 'NÃO'
+            valor_iss_retido = 0.0
+
         emit_documento = emit_cnpj if emit_cnpj else emit_cpf
         toma_documento = toma_cnpj if toma_cnpj else toma_cpf
 
@@ -293,7 +352,9 @@ def parse_xml_por_nota(xml_path, situacoes_dict=None):
             'cp': cp,
             'csll': csll,
             'pis': pis,
-            'cofins': cofins
+            'cofins': cofins,
+            'iss_retido': iss_retido,
+            'valor_iss_retido': valor_iss_retido
         }
     except Exception as e:
         print(f"[ERRO PARSE] {xml_path}: {e}")
@@ -341,6 +402,16 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
     for caminho in tqdm(xml_paths, desc=f"Processando {os.path.basename(pasta_empresa)}"):
         data = parse_xml_por_nota(caminho, situacoes_dict)
         if data and (not data['data_emissao'] or mesma_competencia(data['data_emissao'], competencia_str)):
+            # Adicionar dados do PDF para Tomados
+            if MODO == 'tomados':
+                pdf_dir = os.path.dirname(caminho).replace('XML', 'PDF')
+                pdf_nome = f"NFSE N° {data['numero_nota'] or 'S_N'}.pdf"
+                pdf_path = os.path.join(pdf_dir, pdf_nome)
+                if os.path.exists(pdf_path):
+                    texto_pdf = extrair_texto_pdf(pdf_path)
+                    dados_pdf = parse_dados_nfse_pdf(texto_pdf)
+                    data['optante_simples'] = dados_pdf.get('simples_nacional', 'N/A')
+                    data['regime_apuracao'] = dados_pdf.get('regime_apuracao', 'N/A')
             dados.append(data)
 
     if not dados:
@@ -355,8 +426,18 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
         'data_emissao': 'Data Emissão', 'valor_bc': 'Valor BC', 'valor_liq': 'Valor Líquido',
         'valor_servico': 'Valor Serviço', 'descricao_serv': 'Descrição Serviço', 'codigo_serv': 'Cód. Serviço',
         'situacao': 'Situação', 'total_retencoes': 'Total Retenções',
-        'irrf': 'IRRF', 'cp': 'CP', 'csll': 'CSLL', 'pis': 'PIS', 'cofins': 'COFINS'
+        'irrf': 'IRRF', 'cp': 'CP', 'csll': 'CSLL', 'pis': 'PIS', 'cofins': 'COFINS',
+        'iss_retido': 'ISS RETIDO?', 'valor_iss_retido': 'VALOR DO ISS',
+        'optante_simples': 'OPTANTE PELO SIMPLES?', 'regime_apuracao': 'REGIME DE APURAÇÃO', 'valor_iss': 'VALOR DO ISS'
     }, inplace=True)
+
+    # Reordenar colunas para colocar VALOR DO ISS logo após ISS RETIDO?
+    if 'ISS RETIDO?' in df.columns and 'VALOR DO ISS' in df.columns:
+        cols = list(df.columns)
+        idx = cols.index('ISS RETIDO?')
+        if cols[idx + 1] != 'VALOR DO ISS':
+            cols.insert(idx + 1, cols.pop(cols.index('VALOR DO ISS')))
+        df = df[cols]
 
     df.sort_values(by=['Data Emissão', 'Número da Nota'], inplace=True, ignore_index=True)
     for col in df.select_dtypes(include='object').columns:
@@ -441,6 +522,20 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
         empresas.add(pasta_emp)
 
     for emp in empresas:
+        # Adicionar dados do PDF para Tomados
+        if MODO == 'tomados':
+            xml_paths = []
+            for root_dir, _, files in os.walk(emp):
+                for f in files:
+                    if f.lower().endswith('.xml'):
+                        xml_paths.append(os.path.join(root_dir, f))
+            for xml_path in xml_paths:
+                # Load existing data (assuming it's already processed, but we need to update)
+                # Actually, better to update in the loop above, but since dados is built in gerar_relatorio, we need to update there.
+                # Wait, in gerar_relatorio, dados is built from parse_xml_por_nota, which doesn't have PDF data.
+                # So, I need to modify gerar_relatorio to add PDF data after data = parse_xml_por_nota
+                pass  # Will modify gerar_relatorio instead
+
         gerar_relatorio_para_empresa(pasta_base, emp, competencia_str, situacoes_dict, log_fn)
 
 # ============================= INTERFACE CUSTOMTKINTER =============================
@@ -524,10 +619,13 @@ class NFSeDownloaderApp:
         self.btn_start.configure(text=f"Baixar NFS-e {tipo}")
 
     def log(self, msg):
+        self.root.after(0, lambda: self._safe_log(msg))
+        print(msg)
+
+    def _safe_log(self, msg):
         self.txt_log.insert("end", msg + "\n")
         self.txt_log.see("end")
         self.root.update_idletasks()
-        print(msg)
 
     def limpar_log(self):
         self.txt_log.delete("0.0", "end")
@@ -541,10 +639,14 @@ class NFSeDownloaderApp:
 
     def iniciar_download(self):
         self.btn_start.configure(state="disabled", text="Processando...")
+        thread = threading.Thread(target=self._run_download)
+        thread.start()
+
+    def _run_download(self):
         try:
             self._rodar_multiempresas()
         finally:
-            self.btn_start.configure(state="normal", text=f"Baixar NFS-e {'Tomados' if MODO == 'tomados' else 'Prestados'}")
+            self.root.after(0, lambda: self.btn_start.configure(state="normal", text=f"Baixar NFS-e {'Tomados' if MODO == 'tomados' else 'Prestados'}"))
 
     def _rodar_multiempresas(self):
         global COMPETENCIA_DESEJADA, SITUACOES_POR_ARQUIVO, PDF_POR_ARQUIVO, PASTA_DOWNLOADS
@@ -571,7 +673,13 @@ class NFSeDownloaderApp:
                 driver = criar_driver(headless=False)
                 driver.get(URL_PORTAL)
 
-                messagebox.showinfo("Atenção", f"1) Faça login\n2) Acesse Notas {secao}\n3) Clique OK quando a tabela aparecer")
+                expected_url = "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas" if MODO == 'prestados' else "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
+
+                while True:
+                    current_url = driver.current_url
+                    if expected_url in current_url:
+                        break
+                    time.sleep(2)  # Verifica a cada 2 segundos
 
                 situacoes_dict = {}
                 pagina = 1
@@ -593,7 +701,7 @@ class NFSeDownloaderApp:
                 if novos:
                     organizar_xmls_e_gerar_relatorios_rodada(PASTA_DOWNLOADS, COMPETENCIA_DESEJADA, novos, situacoes_dict, self.log)
             except Exception as e:
-                self.log(f"ERRO na empresa {empresa}: SEM MOVIMENTO")
+                self.log(f"A Empresa {empresa}: Está SEM MOVIMENTO")
             finally:
                 if driver:
                     try:
