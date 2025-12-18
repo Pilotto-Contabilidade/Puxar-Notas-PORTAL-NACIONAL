@@ -39,7 +39,7 @@ def get_defaults():
 PASTA_DOWNLOADS_DEFAULT, COMPETENCIA_DESEJADA_DEFAULT = get_defaults()
 TIMEOUT = 30
 
-# Funções auxiliares
+# ============================= FUNÇÕES AUXILIARES =============================
 
 def criar_driver(headless=False):
     chrome_options = Options()
@@ -248,20 +248,10 @@ def parse_dados_nfse_pdf(texto):
         simples = re.sub(r'Optante-MicroempresaouEmpresadePequenoPorte\(ME/EPP\)', 'Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)', simples)
         simples = re.sub(r'Nãooptante', 'Não optante', simples)
         regime = re.sub(r'RegimedeapuraçãodostributosfederaisemunicipalpeloSimplesNacional', 'Regime de apuração dos tributos federais e municipal pelo Simples Nacional', regime)
+        regime = re.sub(r'RegimedeapuraçãodostributosfederaispeloSimplesNacionaleoISSQN', 'Regime de apuração dos tributos federais pelo Simples Nacional eo ISSQN', regime)
         # Adicionar espaços adicionais se necessário
         dados['simples_nacional'] = simples
         dados['regime_apuracao'] = regime
-
-    # Captura valor do ISSQN (Apurado ou Retido)
-    match_issqn = re.search(r'ISSQN(?:Apurado|Retido)\s*\n([\d.,-]+)', texto, re.IGNORECASE | re.DOTALL)
-    if match_issqn:
-        valor = match_issqn.group(1).strip()
-        valor = valor.replace('R$', '').replace('.', '').replace(',', '.').strip()
-        try:
-            valor = float(valor)
-        except:
-            pass
-        dados['issqn_apurado'] = valor
 
     return dados
 
@@ -405,7 +395,7 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
             # Adicionar dados do PDF para Tomados
             if MODO == 'tomados':
                 pdf_dir = os.path.dirname(caminho).replace('XML', 'PDF')
-                pdf_nome = f"NFSE N° {data['numero_nota'] or 'S_N'}.pdf"
+                pdf_nome = f"NFSE N° {data['numero_nota']}.pdf"
                 pdf_path = os.path.join(pdf_dir, pdf_nome)
                 if os.path.exists(pdf_path):
                     texto_pdf = extrair_texto_pdf(pdf_path)
@@ -428,7 +418,7 @@ def gerar_relatorio_para_empresa(pasta_base, pasta_empresa, competencia_str, sit
         'situacao': 'Situação', 'total_retencoes': 'Total Retenções',
         'irrf': 'IRRF', 'cp': 'CP', 'csll': 'CSLL', 'pis': 'PIS', 'cofins': 'COFINS',
         'iss_retido': 'ISS RETIDO?', 'valor_iss_retido': 'VALOR DO ISS',
-        'optante_simples': 'OPTANTE PELO SIMPLES?', 'regime_apuracao': 'REGIME DE APURAÇÃO', 'valor_iss': 'VALOR DO ISS'
+        'optante_simples': 'OPTANTE PELO SIMPLES?', 'regime_apuracao': 'REGIME DE APURAÇÃO'
     }, inplace=True)
 
     # Reordenar colunas para colocar VALOR DO ISS logo após ISS RETIDO?
@@ -522,20 +512,6 @@ def organizar_xmls_e_gerar_relatorios_rodada(pasta_base, competencia_str, novos_
         empresas.add(pasta_emp)
 
     for emp in empresas:
-        # Adicionar dados do PDF para Tomados
-        if MODO == 'tomados':
-            xml_paths = []
-            for root_dir, _, files in os.walk(emp):
-                for f in files:
-                    if f.lower().endswith('.xml'):
-                        xml_paths.append(os.path.join(root_dir, f))
-            for xml_path in xml_paths:
-                # Load existing data (assuming it's already processed, but we need to update)
-                # Actually, better to update in the loop above, but since dados is built in gerar_relatorio, we need to update there.
-                # Wait, in gerar_relatorio, dados is built from parse_xml_por_nota, which doesn't have PDF data.
-                # So, I need to modify gerar_relatorio to add PDF data after data = parse_xml_por_nota
-                pass  # Will modify gerar_relatorio instead
-
         gerar_relatorio_para_empresa(pasta_base, emp, competencia_str, situacoes_dict, log_fn)
 
 # ============================= INTERFACE CUSTOMTKINTER =============================
@@ -619,13 +595,10 @@ class NFSeDownloaderApp:
         self.btn_start.configure(text=f"Baixar NFS-e {tipo}")
 
     def log(self, msg):
-        self.root.after(0, lambda: self._safe_log(msg))
-        print(msg)
-
-    def _safe_log(self, msg):
         self.txt_log.insert("end", msg + "\n")
         self.txt_log.see("end")
         self.root.update_idletasks()
+        print(msg)
 
     def limpar_log(self):
         self.txt_log.delete("0.0", "end")
@@ -673,14 +646,6 @@ class NFSeDownloaderApp:
                 driver = criar_driver(headless=False)
                 driver.get(URL_PORTAL)
 
-                expected_url = "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas" if MODO == 'prestados' else "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
-
-                while True:
-                    current_url = driver.current_url
-                    if expected_url in current_url:
-                        break
-                    time.sleep(2)  # Verifica a cada 2 segundos
-
                 situacoes_dict = {}
                 pagina = 1
                 while True:
@@ -701,7 +666,7 @@ class NFSeDownloaderApp:
                 if novos:
                     organizar_xmls_e_gerar_relatorios_rodada(PASTA_DOWNLOADS, COMPETENCIA_DESEJADA, novos, situacoes_dict, self.log)
             except Exception as e:
-                self.log(f"A Empresa {empresa}: Está SEM MOVIMENTO")
+                self.log(f"ERRO na empresa {empresa}: SEM MOVIMENTO")
             finally:
                 if driver:
                     try:
