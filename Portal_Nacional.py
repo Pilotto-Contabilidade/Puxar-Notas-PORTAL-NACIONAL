@@ -12,9 +12,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -54,10 +52,9 @@ def criar_driver(headless=False):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     if headless:
         chrome_options.add_argument("--headless=new")
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=chrome_options
-    )
+
+    # ✅ SEM Service/ChromeDriverManager (Selenium Manager resolve)
+    driver = webdriver.Chrome(options=chrome_options)
     driver.maximize_window()
     return driver
 
