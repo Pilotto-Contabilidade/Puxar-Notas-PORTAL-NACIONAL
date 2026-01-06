@@ -148,10 +148,7 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
             time.sleep(0.5)
 
         antes_xml = set(os.listdir(PASTA_DOWNLOADS))
-        link_xml = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH, ".//a[contains(@href,'Download/NFSe/')]"))
-        )
-        driver.get(link_xml.get_attribute("href"))
+        driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
         aguardar_downloads(PASTA_DOWNLOADS, timeout=0.1)
         novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
         if novos_xml:
@@ -234,30 +231,18 @@ def aplicar_filtro_por_competencia(driver, competencia_str, log_fn=print):
     log_fn("Filtro aplicado com sucesso.")
 
 def processar_pagina(driver, competencia_str, situacoes_dict, log_fn=print):
-    WebDriverWait(driver, TIMEOUT).until(
-        EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]"))
-    )
-
-    qtd = len(driver.find_elements(By.XPATH, "//table//tbody//tr[td]"))
-    log_fn(f"Página atual: {qtd} notas encontradas")
-
+    WebDriverWait(driver, TIMEOUT).until(EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]")))
+    linhas = driver.find_elements(By.XPATH, "//table//tbody//tr[td]")
+    log_fn(f"Página atual: {len(linhas)} notas encontradas")
     baixadas = 0
-    for i in range(1, qtd + 1):
-        # rebusca a linha a cada iteração (evita stale element)
-        linha = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH, f"(//table//tbody//tr[td])[{i}]"))
-        )
-
+    for i, linha in enumerate(linhas, 1):
         r = baixar_xml_da_linha(driver, linha, i, competencia_str, situacoes_dict, log_fn)
-
         if r == "ANTERIOR":
             log_fn("Encontrada nota anterior à competência → parando.")
             return -1
         if r is True:
             baixadas += 1
-
-        time.sleep(0.5)
-
+        time.sleep(1.0)
     log_fn(f"→ {baixadas} notas baixadas nesta página")
     return baixadas
 
