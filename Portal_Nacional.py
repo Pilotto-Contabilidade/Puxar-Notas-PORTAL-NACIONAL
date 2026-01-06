@@ -6,6 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 import re
 import pdfplumber
+import calendar
 import threading
 
 from selenium import webdriver
@@ -13,6 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.keys import Keys
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -146,7 +148,10 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
             time.sleep(0.5)
 
         antes_xml = set(os.listdir(PASTA_DOWNLOADS))
-        driver.get(linha.find_element(By.XPATH, ".//a[contains(@href,'Download/NFSe/')]").get_attribute("href"))
+        link_xml = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH, ".//a[contains(@href,'Download/NFSe/')]"))
+        )
+        driver.get(link_xml.get_attribute("href"))
         aguardar_downloads(PASTA_DOWNLOADS, timeout=0.1)
         novos_xml = [f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml') and f not in antes_xml]
         if novos_xml:
@@ -170,19 +175,89 @@ def baixar_xml_da_linha(driver, linha, num, comp, situacoes_dict, log_fn):
         log_fn(f"Linha {num}: FALHA → {str(e)[:100]}")
         return False
 
+def aplicar_filtro_por_competencia(driver, competencia_str, log_fn=print):
+    """
+    Preenche os campos:
+    - datainicio = 01/MM/AAAA
+    - datafim    = último dia do mês (28/29/30/31 conforme mês/ano)
+    e clica no botão Filtrar.
+    Depois, espera a "mini recarga" terminar.
+    """
+    mes, ano = competencia_str.split("/")
+    mes = int(mes)
+    ano = int(ano)
+
+    data_inicio = f"01/{mes:02d}/{ano}"
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+    data_fim = f"{ultimo_dia:02d}/{mes:02d}/{ano}"
+
+    log_fn(">>> INICIANDO PREENCHIMENTO DO FILTRO <<<")
+    log_fn(f"Aplicando filtro automático: {data_inicio} até {data_fim}")
+
+    inp_inicio = WebDriverWait(driver, TIMEOUT).until(
+        EC.presence_of_element_located((By.ID, "datainicio"))
+    )
+    inp_fim = WebDriverWait(driver, TIMEOUT).until(
+        EC.presence_of_element_located((By.ID, "datafim"))
+    )
+
+    def preencher_input(el, valor):
+        el.click()
+        el.send_keys(Keys.CONTROL, "a")
+        el.send_keys(Keys.DELETE)
+        el.send_keys(valor)
+        el.send_keys(Keys.TAB)
+
+    preencher_input(inp_inicio, data_inicio)
+    preencher_input(inp_fim, data_fim)
+
+    # captura um elemento da tabela atual para detectar "mini-reload"
+    try:
+        primeira_linha = driver.find_element(By.XPATH, "//table//tbody//tr[td]")
+    except:
+        primeira_linha = None
+
+    btn_filtrar = WebDriverWait(driver, TIMEOUT).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[@type='submit' and contains(.,'Filtrar')]"))
+    )
+    btn_filtrar.click()
+
+    # espera a tabela antiga ficar stale (sumir/recarregar)
+    if primeira_linha:
+        WebDriverWait(driver, TIMEOUT).until(EC.staleness_of(primeira_linha))
+
+    # espera a nova tabela (pós-filtro) carregar
+    WebDriverWait(driver, TIMEOUT).until(
+        EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]"))
+    )
+
+    log_fn("Filtro aplicado com sucesso.")
+
 def processar_pagina(driver, competencia_str, situacoes_dict, log_fn=print):
-    WebDriverWait(driver, TIMEOUT).until(EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]")))
-    linhas = driver.find_elements(By.XPATH, "//table//tbody//tr[td]")
-    log_fn(f"Página atual: {len(linhas)} notas encontradas")
+    WebDriverWait(driver, TIMEOUT).until(
+        EC.presence_of_all_elements_located((By.XPATH, "//table//tbody//tr[td]"))
+    )
+
+    qtd = len(driver.find_elements(By.XPATH, "//table//tbody//tr[td]"))
+    log_fn(f"Página atual: {qtd} notas encontradas")
+
     baixadas = 0
-    for i, linha in enumerate(linhas, 1):
+    for i in range(1, qtd + 1):
+        # rebusca a linha a cada iteração (evita stale element)
+        linha = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH, f"(//table//tbody//tr[td])[{i}]"))
+        )
+
         r = baixar_xml_da_linha(driver, linha, i, competencia_str, situacoes_dict, log_fn)
+
         if r == "ANTERIOR":
             log_fn("Encontrada nota anterior à competência → parando.")
             return -1
         if r is True:
             baixadas += 1
-        time.sleep(1.0)
+
+        time.sleep(0.5)
+
     log_fn(f"→ {baixadas} notas baixadas nesta página")
     return baixadas
 
@@ -642,6 +717,9 @@ class NFSeDownloaderApp:
                 xml_antes = {f for f in os.listdir(PASTA_DOWNLOADS) if f.lower().endswith('.xml')}
                 driver = criar_driver(headless=False)
                 driver.get(URL_PORTAL)
+
+                # ✅ APLICA O FILTRO ANTES DE QUALQUER DOWNLOAD
+                aplicar_filtro_por_competencia(driver, COMPETENCIA_DESEJADA, self.log)
 
                 situacoes_dict = {}
                 pagina = 1
